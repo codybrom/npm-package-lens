@@ -93,6 +93,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+
       - uses: actions/download-artifact@v8
         with:
           name: ${{ needs.package.outputs.packageName }}
@@ -105,6 +107,31 @@ jobs:
             -f ref="refs/tags/${{ needs.package.outputs.tag }}" \
             -f sha="${{ github.sha }}"
 
+      - name: Build release notes
+        env:
+          VERSION: ${{ needs.package.outputs.version }}
+          TAG: ${{ needs.package.outputs.tag }}
+          PACKAGE_NAME: ${{ needs.package.outputs.packageName }}
+          REPO: ${{ github.repository }}
+        run: |
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { found=1; next }
+            found && /^## \[/ { exit }
+            found && /^\[.+\]:/ { exit }
+            found { print }
+          ' CHANGELOG.md > body.md
+
+          # Trim leading/trailing blank lines
+          sed -i -e '/./,$!d' body.md
+          sed -i -e ':a' -e '/^\n*$/{$d;N;ba' -e '}' body.md
+
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "📦 [\`.vsix\` download](https://github.com/$REPO/releases/download/$TAG/$PACKAGE_NAME) · [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=codybrom.npm-package-lens) · [Open VSX](https://open-vsx.org/extension/codybrom/npm-package-lens)"
+          } >> body.md
+
       - name: Create Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -112,4 +139,5 @@ jobs:
           gh release create "${{ needs.package.outputs.tag }}" \
             "${{ needs.package.outputs.packageName }}" \
             --repo "${{ github.repository }}" \
-            --title "Release ${{ needs.package.outputs.version }}"
+            --title "npm Package Lens v${{ needs.package.outputs.version }}" \
+            --notes-file body.md
