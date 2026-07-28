@@ -48,7 +48,7 @@ suite("hover-provider", () => {
     assert.ok(!hover.value.includes("up to date"));
   });
 
-  test("Truncates long descriptions", () => {
+  test("Shows long descriptions in full, without truncation", () => {
     const longDescription = "a".repeat(200);
     const hover = buildHoverMarkdown({
       name: "example",
@@ -56,8 +56,7 @@ suite("hover-provider", () => {
       description: longDescription,
     });
 
-    assert.ok(hover.value.includes("…"));
-    assert.ok(!hover.value.includes(longDescription));
+    assert.ok(hover.value.includes(longDescription));
   });
 
   test("Places the version line below the title, on its own line", () => {

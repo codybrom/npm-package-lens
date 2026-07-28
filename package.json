@@ -4,6 +4,10 @@
   "description": "Hover and inline annotations showing outdated dependencies directly in package.json",
   "version": "0.1.0",
   "publisher": "codybromley",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/codybrom/npm-package-lens.git"
+  },
   "engines": {
     "vscode": "^1.130.0"
   },
@@ -19,12 +23,13 @@
       "supported": true
     }
   },
-  "main": "./out/src/extension",
+  "main": "./dist/extension.js",
   "scripts": {
-    "vscode:prepublish": "tsc",
+    "vscode:prepublish": "npm run bundle",
+    "bundle": "node esbuild.js",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile",
+    "pretest": "npm run compile && npm run bundle",
     "test": "node ./out/test/runTest.js",
     "pretest:unit": "npm run compile",
     "test:unit": "mocha",
@@ -46,6 +51,7 @@
     "@types/semver-utils": "^1.1.3",
     "@types/vscode": "^1.125.0",
     "@vscode/test-electron": "^2.5.2",
+    "esbuild": "^0.28.1",
     "eslint": "^10.8.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-jsdoc": "^63.3.2",
@@ -54,5 +60,8 @@
     "prettier": "^3.9.6",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.65.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true
   }
 }

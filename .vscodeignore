@@ -1,8 +1,10 @@
-# Source (only compiled out/src/**.js ships)
+# Only dist/ (the esbuild bundle + its sourcemap) ships. Everything else
+# here is either source that got bundled in, or dev-only tooling.
 src/**
 test/**
-out/test/**
-**/*.map
+out/**
+node_modules/**
+esbuild.js
 
 # Editor / repo tooling, not needed at runtime
 .vscode/**
@@ -10,4 +12,7 @@ out/test/**
 .claude/**
 .gitignore
 .prettierignore
+.prettierrc.json
+.mocharc.json
+eslint.config.mjs
 tsconfig.json
