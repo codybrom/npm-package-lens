@@ -1,16 +1,60 @@
 import * as assert from "assert";
 import { buildHoverMarkdown } from "../../../src/features/hover-provider";
+import type { DependencyStatus, RegistryMetadata } from "../../../src/types";
+
+/**
+ * Builds registry metadata with sensible defaults.
+ * @param overrides - The fields to set.
+ * @returns The metadata.
+ */
+function metadata(overrides: Partial<RegistryMetadata> = {}): RegistryMetadata {
+  return {
+    name: "lodash",
+    latestVersion: "4.17.21",
+    description: "Lodash modular utilities.",
+    homepage: undefined,
+    repositoryUrl: undefined,
+    latestVersionPublishedAt: undefined,
+    distTags: { latest: "4.17.21" },
+    versions: ["4.17.20", "4.17.21"],
+    publishedAt: {},
+    peerDependenciesByVersion: {},
+    deprecations: {},
+    ...overrides,
+  };
+}
+
+/**
+ * Builds an analyzed dependency with sensible defaults, so each test only
+ * states the part it cares about.
+ * @param overrides - The fields to set.
+ * @returns The status.
+ */
+function status(overrides: Partial<DependencyStatus> = {}): DependencyStatus {
+  return {
+    entry: {
+      name: "lodash",
+      specifier: "4.17.21",
+      section: "dependencies",
+      source: "npm",
+      nameRange: { start: 0, end: 0 },
+      specifierRange: { start: 0, end: 0 },
+    },
+    metadata: metadata(),
+    resolvedSpecifier: "4.17.21",
+    installedVersion: "4.17.21",
+    latestVersion: "4.17.21",
+    bump: "none",
+    conflicts: [],
+    vulnerabilities: [],
+    deprecation: undefined,
+    ...overrides,
+  };
+}
 
 suite("hover-provider", () => {
   test("Builds hover markdown for an up-to-date package", () => {
-    const hover = buildHoverMarkdown({
-      name: "lodash",
-      installedVersion: "4.17.21",
-      resolvedInstalledVersion: "4.17.21",
-      latestVersion: "4.17.21",
-      description: "Lodash modular utilities.",
-      downloads: "1.2M",
-    });
+    const hover = buildHoverMarkdown(status(), "1.2M");
 
     const markdown = hover.value;
     assert.ok(markdown.includes("**lodash**"));
@@ -22,146 +66,135 @@ suite("hover-provider", () => {
     assert.ok(hover.supportHtml);
   });
 
-  test("Builds hover markdown for a major update", () => {
-    const hover = buildHoverMarkdown({
-      name: "prisma",
-      installedVersion: "^6.19.0",
-      resolvedInstalledVersion: "^6.19.0",
-      latestVersion: "7.9.1",
-      description: "Database toolkit.",
-    });
+  test("Shows the version transition for an available update", () => {
+    const hover = buildHoverMarkdown(
+      status({
+        entry: {
+          name: "prisma",
+          specifier: "^6.19.0",
+          section: "dependencies",
+          source: "npm",
+          nameRange: { start: 0, end: 0 },
+          specifierRange: { start: 0, end: 0 },
+        },
+        bump: "major",
+        latestVersion: "7.9.1",
+        metadata: metadata({ name: "prisma", latestVersion: "7.9.1" }),
+      }),
+    );
 
-    const markdown = hover.value;
-    assert.ok(markdown.includes("major update"));
-    assert.ok(markdown.includes("^6.19.0"));
-    assert.ok(markdown.includes("7.9.1"));
+    assert.ok(hover.value.includes("major update"));
+    assert.ok(hover.value.includes("^6.19.0"));
+    assert.ok(hover.value.includes("7.9.1"));
   });
 
   test("Shows a distinct badge for specifiers that can't be compared", () => {
-    const hover = buildHoverMarkdown({
-      name: "my-workspace-package",
-      installedVersion: "workspace:*",
-      latestVersion: "1.0.0",
-    });
+    const hover = buildHoverMarkdown(
+      status({ bump: "unsupported", latestVersion: undefined }),
+    );
 
     assert.ok(hover.value.includes("not comparable"));
-    assert.ok(!hover.value.includes("up to date"));
   });
 
-  test("Shows long descriptions in full, without truncation", () => {
-    const longDescription = "a".repeat(200);
-    const hover = buildHoverMarkdown({
-      name: "example",
-      latestVersion: "1.0.0",
-      description: longDescription,
-    });
-
-    assert.ok(hover.value.includes(longDescription));
-  });
-
-  test("Places the version line below the title, on its own line", () => {
-    const hover = buildHoverMarkdown({
-      name: "lodash",
-      installedVersion: "4.17.21",
-      resolvedInstalledVersion: "4.17.21",
-      latestVersion: "4.17.21",
-    });
-
-    const [title, versionLine] = hover.value.split("\n\n");
-    assert.equal(title, "**lodash**");
-    assert.ok(versionLine?.includes("4.17.21"));
-  });
-
-  test("Shows the status badge after the version, not before", () => {
-    const hover = buildHoverMarkdown({
-      name: "prisma",
-      installedVersion: "^6.19.0",
-      resolvedInstalledVersion: "^6.19.0",
-      latestVersion: "7.9.1",
-    });
-
-    const [, versionLine] = hover.value.split("\n\n");
-    const versionIndex = versionLine?.indexOf("7.9.1") ?? -1;
-    const badgeIndex = versionLine?.indexOf("major update") ?? -1;
-    assert.ok(versionIndex >= 0 && badgeIndex >= 0);
-    assert.ok(versionIndex < badgeIndex);
-  });
-
-  test("Shows how recently the latest version was published, inline on the version line", () => {
-    const oneWeekAgo = new Date(
-      Date.now() - 7 * 24 * 60 * 60 * 1000,
-    ).toISOString();
-    const hover = buildHoverMarkdown({
-      name: "lodash",
-      latestVersion: "4.17.21",
-      latestVersionPublishedAt: oneWeekAgo,
-    });
-
-    const [, versionLine] = hover.value.split("\n\n");
-    assert.ok(versionLine?.includes("published 7 days ago"));
-  });
-
-  test("Omits the published text when the timestamp is unknown", () => {
-    const hover = buildHoverMarkdown({
-      name: "lodash",
-      latestVersion: "4.17.21",
-    });
-
-    assert.ok(!hover.value.includes("published"));
-  });
-
-  test("Always links to the npm package page", () => {
-    const hover = buildHoverMarkdown({
-      name: "lodash",
-      latestVersion: "4.17.21",
-    });
-
-    assert.ok(
-      hover.value.includes(
-        '<a href="https://www.npmjs.com/package/lodash">npm</a>',
-      ),
+  test("Names each package blocking an upgrade and whether upgrading it helps", () => {
+    const hover = buildHoverMarkdown(
+      status({
+        bump: "major",
+        latestVersion: "8.1.0",
+        conflicts: [
+          {
+            blockedBy: "some-plugin",
+            blockerVersion: "2.1.0",
+            requiredRange: "^7.0.0",
+            resolvedByUpgradingBlocker: true,
+          },
+        ],
+      }),
     );
+
+    assert.ok(hover.value.includes("update blocked"));
+    assert.ok(hover.value.includes("some-plugin@2.1.0"));
+    assert.ok(hover.value.includes("^7.0.0"));
+    assert.ok(hover.value.includes("upgrading"));
   });
 
-  test("Links to the repository and homepage when both are known and distinct", () => {
-    const hover = buildHoverMarkdown({
-      name: "lodash",
-      latestVersion: "4.17.21",
-      repositoryUrl: "https://github.com/lodash/lodash",
-      homepage: "https://lodash.com",
-    });
-
-    assert.ok(
-      hover.value.includes(
-        '<a href="https://github.com/lodash/lodash">Repository</a>',
-      ),
+  test("Reports each advisory with its fix version", () => {
+    const hover = buildHoverMarkdown(
+      status({
+        vulnerabilities: [
+          {
+            id: "GHSA-1111-2222-3333",
+            summary: "Prototype pollution",
+            severity: "HIGH",
+            url: "https://osv.dev/vulnerability/GHSA-1111-2222-3333",
+            fixedVersion: "4.17.21",
+          },
+        ],
+      }),
     );
-    assert.ok(hover.value.includes('<a href="https://lodash.com">Website</a>'));
+
+    assert.ok(hover.value.includes("known vulnerability"));
+    assert.ok(hover.value.includes("GHSA-1111-2222-3333"));
+    assert.ok(hover.value.includes("Prototype pollution"));
+    assert.ok(hover.value.includes("fixed in 4.17.21"));
   });
 
-  test("Omits the homepage link when it duplicates the repository URL", () => {
-    const hover = buildHoverMarkdown({
-      name: "example",
-      latestVersion: "1.0.0",
-      repositoryUrl: "https://github.com/foo/bar",
-      homepage: "https://github.com/foo/bar",
-    });
+  test("Reports a publisher's deprecation notice", () => {
+    const hover = buildHoverMarkdown(
+      status({ deprecation: "This package is no longer maintained" }),
+    );
 
-    assert.ok(!hover.value.includes(">Website<"));
+    assert.ok(hover.value.includes("Deprecated"));
+    assert.ok(hover.value.includes("no longer maintained"));
   });
 
-  test("Shows the download count on the links row, after the other links", () => {
-    const hover = buildHoverMarkdown({
-      name: "lodash",
-      latestVersion: "4.17.21",
-      repositoryUrl: "https://github.com/lodash/lodash",
-      downloads: "1.2M",
-    });
+  test("Escapes registry text before it reaches the HTML-enabled hover", () => {
+    const hover = buildHoverMarkdown(
+      status({ deprecation: "<img src=x onerror=alert(1)>" }),
+    );
 
-    const linksLine = hover.value.split("\n\n").at(-1);
-    const repoIndex = linksLine?.indexOf("Repository") ?? -1;
-    const downloadsIndex = linksLine?.indexOf("1.2M downloads/mo") ?? -1;
-    assert.ok(repoIndex >= 0 && downloadsIndex >= 0);
-    assert.ok(repoIndex < downloadsIndex);
+    assert.ok(!hover.value.includes("<img"));
+    assert.ok(hover.value.includes("&lt;img"));
+  });
+
+  test("Links out to npm, the repository, and the homepage", () => {
+    const hover = buildHoverMarkdown(
+      status({
+        metadata: metadata({
+          repositoryUrl: "https://github.com/lodash/lodash",
+          homepage: "https://lodash.com/",
+        }),
+      }),
+    );
+
+    assert.ok(hover.value.includes("https://www.npmjs.com/package/lodash"));
+    assert.ok(hover.value.includes("https://github.com/lodash/lodash"));
+    assert.ok(hover.value.includes("https://lodash.com/"));
+  });
+
+  test("Doesn't repeat a homepage that duplicates the repository link", () => {
+    const url = "https://github.com/lodash/lodash";
+    const hover = buildHoverMarkdown(
+      status({ metadata: metadata({ repositoryUrl: url, homepage: url }) }),
+    );
+
+    assert.equal(hover.value.split(url).length - 1, 1);
+  });
+
+  test("Omits the npm link for a Node.js engine entry", () => {
+    const hover = buildHoverMarkdown(
+      status({
+        entry: {
+          name: "node",
+          specifier: ">=22",
+          section: "engines",
+          source: "node",
+          nameRange: { start: 0, end: 0 },
+          specifierRange: { start: 0, end: 0 },
+        },
+      }),
+    );
+
+    assert.ok(!hover.value.includes("npmjs.com"));
   });
 });

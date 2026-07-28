@@ -8,9 +8,13 @@
     "browsable",
     "codybrom",
     "esbuild",
+    "hideable",
     "linecap",
     "linejoin",
     "mocharc",
     "ovsx"
-  ]
+  ],
+  "markdownlint.config": {
+    "MD024": { "siblings_only": true }
+  }
 }

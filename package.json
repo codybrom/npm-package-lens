@@ -1,8 +1,8 @@
 {
   "name": "npm-package-lens",
   "displayName": "npm Package Lens",
-  "description": "Hover and inline annotations showing outdated dependencies directly in package.json",
-  "version": "0.1.0",
+  "description": "Dependency updates, peer-conflict warnings, vulnerability checks, and one-click upgrades — inline in package.json",
+  "version": "0.2.0",
   "publisher": "codybrom",
   "repository": {
     "type": "git",
@@ -12,7 +12,8 @@
     "vscode": "^1.130.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Linters"
   ],
   "activationEvents": [
     "onLanguage:json",
@@ -32,7 +33,7 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run bundle",
     "test": "node ./out/test/runTest.js",
-    "pretest:unit": "npm run compile",
+    "pretest:unit": "npm run compile && npm run bundle",
     "test:unit": "mocha",
     "test:all": "npm run test:unit && npm test",
     "format": "prettier --write .",
@@ -42,6 +43,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "jsonc-parser": "^3.3.1",
+    "semver": "^7.8.5",
     "semver-utils": "^1.1.4",
     "zod": "^4.4.3"
   },
@@ -49,6 +52,7 @@
     "@eslint/js": "^10.0.1",
     "@types/mocha": "^10.0.10",
     "@types/node": "^26.1.2",
+    "@types/semver": "^7.7.1",
     "@types/semver-utils": "^1.1.3",
     "@types/vscode": "^1.125.0",
     "@vscode/test-electron": "^2.5.2",
@@ -64,5 +68,314 @@
   },
   "allowScripts": {
     "esbuild@0.28.1": true
+  },
+  "keywords": [
+    "npm",
+    "package.json",
+    "dependencies",
+    "outdated",
+    "updates",
+    "semver",
+    "peer dependencies",
+    "vulnerabilities",
+    "upgrade",
+    "codelens"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "npmPackageLens.checkUpdates",
+        "title": "Check for dependency updates",
+        "category": "npm Package Lens",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "npmPackageLens.refresh",
+        "title": "Refresh dependency data (clears the cache)",
+        "category": "npm Package Lens",
+        "icon": "$(clear-all)"
+      },
+      {
+        "command": "npmPackageLens.showSuggestions",
+        "title": "Show version suggestions",
+        "category": "npm Package Lens",
+        "icon": "$(versions)"
+      },
+      {
+        "command": "npmPackageLens.hideSuggestions",
+        "title": "Hide version suggestions",
+        "category": "npm Package Lens",
+        "icon": "$(versions)"
+      },
+      {
+        "command": "npmPackageLens.showPrereleases",
+        "title": "Show prerelease versions",
+        "category": "npm Package Lens",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "npmPackageLens.hidePrereleases",
+        "title": "Hide prerelease versions",
+        "category": "npm Package Lens",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "npmPackageLens.updateDependency",
+        "title": "Update dependency",
+        "category": "npm Package Lens"
+      },
+      {
+        "command": "npmPackageLens.updateDependencyAndInstall",
+        "title": "Update dependency and install",
+        "category": "npm Package Lens"
+      },
+      {
+        "command": "npmPackageLens.updateAll",
+        "title": "Update all dependencies to latest",
+        "category": "npm Package Lens"
+      },
+      {
+        "command": "npmPackageLens.updateMajor",
+        "title": "Update dependencies (major only)",
+        "category": "npm Package Lens"
+      },
+      {
+        "command": "npmPackageLens.updateMinor",
+        "title": "Update dependencies (minor only)",
+        "category": "npm Package Lens"
+      },
+      {
+        "command": "npmPackageLens.updatePatch",
+        "title": "Update dependencies (patch only)",
+        "category": "npm Package Lens"
+      },
+      {
+        "command": "npmPackageLens.sortDependencies",
+        "title": "Sort dependencies alphabetically",
+        "category": "npm Package Lens"
+      },
+      {
+        "command": "npmPackageLens.runInstall",
+        "title": "Run install for this package.json",
+        "category": "npm Package Lens"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "npmPackageLens",
+          "title": "npm Package Lens",
+          "icon": "images/activity-bar.svg"
+        }
+      ]
+    },
+    "views": {
+      "npmPackageLens": [
+        {
+          "type": "webview",
+          "id": "npmPackageLens.panel",
+          "name": "Dependencies",
+          "icon": "images/activity-bar.svg"
+        }
+      ]
+    },
+    "menus": {
+      "editor/title": [
+        {
+          "command": "npmPackageLens.showSuggestions",
+          "when": "resourceFilename =~ /package\\.json$/ && !npmPackageLens.suggestionsVisible",
+          "group": "navigation@1"
+        },
+        {
+          "command": "npmPackageLens.hideSuggestions",
+          "when": "resourceFilename =~ /package\\.json$/ && npmPackageLens.suggestionsVisible",
+          "group": "navigation@1"
+        },
+        {
+          "command": "npmPackageLens.showPrereleases",
+          "when": "resourceFilename =~ /package\\.json$/ && !npmPackageLens.prereleasesVisible",
+          "group": "navigation@2"
+        },
+        {
+          "command": "npmPackageLens.hidePrereleases",
+          "when": "resourceFilename =~ /package\\.json$/ && npmPackageLens.prereleasesVisible",
+          "group": "navigation@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "npmPackageLens.updateAll",
+          "when": "resourceFilename =~ /package\\.json$/",
+          "group": "npmPackageLens@1"
+        },
+        {
+          "command": "npmPackageLens.updatePatch",
+          "when": "resourceFilename =~ /package\\.json$/",
+          "group": "npmPackageLens@2"
+        },
+        {
+          "command": "npmPackageLens.sortDependencies",
+          "when": "resourceFilename =~ /package\\.json$/",
+          "group": "npmPackageLens@3"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "npmPackageLens.checkUpdates",
+          "when": "view == npmPackageLens.panel",
+          "group": "navigation@1"
+        },
+        {
+          "command": "npmPackageLens.refresh",
+          "when": "view == npmPackageLens.panel",
+          "group": "navigation@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "npmPackageLens.updateDependency",
+          "when": "false"
+        },
+        {
+          "command": "npmPackageLens.updateDependencyAndInstall",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "npm Package Lens",
+      "properties": {
+        "npmPackageLens.registryUrl": {
+          "type": "string",
+          "default": "https://registry.npmjs.org",
+          "markdownDescription": "Registry queried for package versions. Point this at a private registry to resolve internal packages."
+        },
+        "npmPackageLens.cacheDuration": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "markdownDescription": "How long registry responses are cached, in minutes. Set to `0` to disable caching."
+        },
+        "npmPackageLens.files": {
+          "type": "string",
+          "default": "**/package.json",
+          "markdownDescription": "Glob selecting which files are treated as npm manifests."
+        },
+        "npmPackageLens.dependencyProperties": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "dependencies",
+            "devDependencies",
+            "peerDependencies",
+            "optionalDependencies",
+            "overrides",
+            "overrides.*",
+            "resolutions",
+            "pnpm.overrides",
+            "pnpm.overrides.*",
+            "jspm.dependencies",
+            "jspm.devDependencies",
+            "jspm.peerDependencies",
+            "jspm.optionalDependencies"
+          ],
+          "markdownDescription": "Dotted `package.json` property paths parsed as dependency maps. A `*` segment matches any single property name. `engines` and `packageManager` are always parsed."
+        },
+        "npmPackageLens.checkOnOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check for updates automatically when a package.json is opened."
+        },
+        "npmPackageLens.decorations.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline end-of-line annotations on each dependency."
+        },
+        "npmPackageLens.decorations.showUpToDate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Annotate dependencies that are already on the newest version."
+        },
+        "npmPackageLens.codeLens.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show clickable version suggestions above each dependency. Requires `#editor.codeLens#` to be enabled."
+        },
+        "npmPackageLens.codeLens.showOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show per-dependency version suggestions without needing the editor toolbar toggle. Turn this off to start with only the section summaries, and reveal suggestions with the toolbar's V icon."
+        },
+        "npmPackageLens.codeLens.showSectionSummaries": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a summary above each dependency section."
+        },
+        "npmPackageLens.codeLens.showUpToDate": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show suggestions on dependencies that are already on the newest version. Off by default so suggestions mark out only the rows worth acting on."
+        },
+        "npmPackageLens.prereleases.showOnStartup": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show prerelease suggestions without needing the editor toolbar toggle."
+        },
+        "npmPackageLens.prereleases.tagFilter": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Prerelease tags to show, e.g. `[\"alpha\", \"beta\"]`. Leave empty to show all of them."
+        },
+        "npmPackageLens.suggestions.indicators": {
+          "type": "object",
+          "default": {
+            "latest": "🟢",
+            "satisfiesLatest": "🟢",
+            "match": "🟡",
+            "noMatch": "⚪",
+            "major": "🔴",
+            "minor": "🟡",
+            "patch": "🔵",
+            "updatable": "↑",
+            "updatableVulnerable": "⚠️",
+            "blocked": "✋",
+            "directory": "📁",
+            "prerelease": "🧪",
+            "error": "🔴"
+          },
+          "description": "Glyphs shown before each version suggestion."
+        },
+        "npmPackageLens.statusBar.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a summary of the active package.json in the status bar."
+        },
+        "npmPackageLens.peerDependencies.checkConflicts": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check whether an upgrade would violate another package's peer dependency requirements."
+        },
+        "npmPackageLens.vulnerabilities.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Check packages against the [OSV](https://osv.dev) advisory database and report findings as diagnostics."
+        },
+        "npmPackageLens.onSaveChanges": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Label of a `tasks.json` task run when a saved package.json has changed dependencies. Leave unset and saving runs nothing. Where an install does run — the update actions, and `#npmPackageLens.runInstallAfterUpgrade#` — this task takes the place of `npm install`."
+        },
+        "npmPackageLens.runInstallAfterUpgrade": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run the install step after the bulk update commands. Single-dependency updates choose explicitly, via the separate Update and Update & install actions."
+        }
+      }
+    }
   }
 }

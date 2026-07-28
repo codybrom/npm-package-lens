@@ -6,106 +6,240 @@ import {
   Position,
   TextDocument,
 } from "vscode";
+import type { DependencyAnalyzer } from "../analysis/analyzer";
 import { formatRelativeTime } from "../format";
-import { getDownloadCount, getRegistryMetadata } from "../npm/registry-client";
+import { getDownloadCount } from "../npm/registry-client";
+import { isManifest } from "./manifest-documents";
 import {
-  classifySpecifier,
-  getBumpSeverity,
-  resolveInstalledVersion,
-} from "../npm/version-diff";
-import { BumpSeverity, PackageMetadata } from "../types";
+  displayStateOf,
+  themeColorVariable,
+  type DisplayState,
+} from "./presentation";
+import type { DependencyStatus, PeerConflict, Vulnerability } from "../types";
 
-const RESERVED_PACKAGE_JSON_KEYS = new Set([
-  "dependencies",
-  "devDependencies",
-  "peerDependencies",
-  "optionalDependencies",
-  "name",
-  "version",
-  "scripts",
-]);
-
-const BUMP_LABEL: Record<BumpSeverity, string> = {
+/** The badge shown at the top of a hover, per display state. */
+const STATE_LABEL: Record<DisplayState, string> = {
+  vulnerable: "$(shield) known vulnerability",
+  blocked: "$(circle-slash) update blocked",
+  deprecated: "$(warning) deprecated",
   major: "$(error) major update",
   minor: "$(warning) minor update",
   patch: "$(info) patch update",
-  none: "$(pass) up to date",
-  unsupported: "$(circle-slash) not comparable",
+  upToDate: "$(pass) up to date",
+  unknown: "$(circle-slash) not comparable",
 };
+
+/** The faded color used for details that shouldn't compete for attention. */
+const MUTED_COLOR = "var(--vscode-disabledForeground)";
 
 /**
  * Provides rich hover tooltips for dependency entries in `package.json`,
- * showing update status, version comparison, download count, and
- * description — sourced live from the npm registry.
+ * showing update status, peer conflicts, advisories, download count, and
+ * description.
+ *
+ * Everything but the download count comes from the shared analysis, so
+ * hovering costs at most one network request — and none at all once a
+ * package's downloads have been read once.
  */
 export class NpmHoverProvider implements HoverProvider {
+  private readonly downloadCounts = new Map<string, string | undefined>();
+
+  /**
+   * @param analyzer - The analyzer supplying dependency statuses.
+   */
+  constructor(private readonly analyzer: DependencyAnalyzer) {}
+
   /** @inheritdoc */
-  provideHover(
+  async provideHover(
     document: TextDocument,
     position: Position,
     token: CancellationToken,
-  ): Thenable<Hover | undefined> {
-    const packageName = getPackageNameAtPosition(document, position);
-    if (!packageName) {
-      return Promise.resolve(undefined);
+  ): Promise<Hover | undefined> {
+    if (!isManifest(document)) {
+      return undefined;
     }
 
-    return getPackageMetadata(packageName, document, position, token).then(
-      (metadata) => {
-        if (!metadata || token.isCancellationRequested) {
-          return undefined;
-        }
+    const cached = this.analyzer.get(document.uri);
+    const analysis =
+      cached?.documentVersion === document.version
+        ? cached
+        : await this.analyzer.analyze(document);
 
-        return new Hover(buildHoverMarkdown(metadata));
-      },
+    if (isCancelled(token)) {
+      return undefined;
+    }
+
+    const status = analysis.statuses.find(
+      (candidate) =>
+        document.positionAt(candidate.entry.nameRange.start).line ===
+        position.line,
     );
+    if (!status) {
+      return undefined;
+    }
+
+    const downloads = await this.getDownloads(status, token);
+    if (isCancelled(token)) {
+      return undefined;
+    }
+
+    return new Hover(buildHoverMarkdown(status, downloads));
+  }
+
+  /**
+   * Resolves a package's monthly download count, remembering the answer —
+   * including a failed lookup — so repeated hovers don't re-request it.
+   * @param status - The dependency being hovered.
+   * @param token - Cancellation token forwarded to the request.
+   * @returns The formatted count, or `undefined` if unavailable.
+   */
+  private async getDownloads(
+    status: DependencyStatus,
+    token: CancellationToken,
+  ): Promise<string | undefined> {
+    const name = status.entry.name;
+    if (status.entry.source === "node") {
+      return undefined;
+    }
+    if (this.downloadCounts.has(name)) {
+      return this.downloadCounts.get(name);
+    }
+
+    const downloads = await getDownloadCount(name, token).catch(
+      () => undefined,
+    );
+    if (!isCancelled(token)) {
+      this.downloadCounts.set(name, downloads);
+    }
+    return downloads;
   }
 }
 
 /**
- * Renders a package's metadata as VS Code hover markdown, with the update
- * severity color-coded to match the editor's error/warning/info theme
- * colors.
+ * Reads a token's cancellation state.
  *
- * Exported for unit testing; not part of the extension's public API.
- * @param metadata - The resolved package metadata to render.
- * @returns A {@link MarkdownString} with theme icons and HTML color spans enabled.
+ * Wrapped in a function deliberately: read inline, the type checker narrows
+ * the property after the first check and treats every later one as dead
+ * code — but the token really can be cancelled while an intervening request
+ * is in flight, which is exactly when these checks matter.
+ * @param token - The token to read.
+ * @returns `true` if cancellation has been requested.
  */
-export function buildHoverMarkdown(metadata: PackageMetadata): MarkdownString {
-  const bump = getBumpSeverity(
-    metadata.resolvedInstalledVersion,
-    metadata.latestVersion,
-  );
+function isCancelled(token: CancellationToken): boolean {
+  return token.isCancellationRequested;
+}
 
-  const latest = `\`${metadata.latestVersion}\``;
+/**
+ * Renders a dependency's analyzed state as VS Code hover markdown, with the
+ * status color-coded to match the editor's error/warning/info theme colors.
+ *
+ * Exported for testing; not part of the extension's public API.
+ * @param status - The analyzed dependency to render.
+ * @param downloads - The formatted monthly download count, if known.
+ * @returns A {@link MarkdownString} with theme icons, HTML, and command links enabled.
+ */
+export function buildHoverMarkdown(
+  status: DependencyStatus,
+  downloads?: string,
+): MarkdownString {
+  const state = displayStateOf(status);
+  const color = themeColorVariable(state);
+  const name = status.entry.name;
+  const latest = status.latestVersion;
+
   const versions =
-    bump !== "none" && metadata.installedVersion
-      ? `\`${metadata.installedVersion}\` → ${colorSpan(latest, bumpColor(bump))}`
-      : latest;
+    latest === undefined
+      ? `\`${status.entry.specifier}\``
+      : state === "upToDate"
+        ? `\`${latest}\``
+        : `\`${status.entry.specifier}\` → ${colorSpan(`\`${latest}\``, color)}`;
 
-  const versionLine = [`${versions} ${statusBadge(bump)}`];
-
-  const publishedAgo = formatRelativeTime(metadata.latestVersionPublishedAt);
-  if (publishedAgo) {
-    versionLine.push(mutedSpan(`published ${publishedAgo}`));
+  const heading = [`${versions} ${colorSpan(STATE_LABEL[state], color)}`];
+  const publishedAgo = formatRelativeTime(
+    status.metadata?.latestVersionPublishedAt,
+  );
+  if (publishedAgo !== undefined) {
+    heading.push(mutedSpan(`published ${publishedAgo}`));
   }
 
-  const lines = [`**${metadata.name}**`, versionLine.join(" · ")];
+  const lines = [`**${name}**`, heading.join(" · ")];
 
-  const description = cleanDescription(metadata.description);
-  if (description) {
+  if (status.deprecation !== undefined) {
+    lines.push(
+      colorSpan(
+        `$(warning) Deprecated: ${escapeHtml(status.deprecation)}`,
+        themeColorVariable("deprecated"),
+      ),
+    );
+  }
+
+  lines.push(...vulnerabilityLines(status.vulnerabilities));
+  lines.push(...conflictLines(status.conflicts, name, latest));
+
+  const description = cleanDescription(status.metadata?.description);
+  if (description !== undefined) {
     lines.push(description);
   }
 
-  const links = buildLinks(metadata);
-  if (links) {
-    lines.push(links);
-  }
+  lines.push(buildLinks(status, downloads));
 
   const markdown = new MarkdownString(lines.join("\n\n"));
   markdown.supportThemeIcons = true;
   markdown.supportHtml = true;
   return markdown;
+}
+
+/**
+ * Renders each advisory affecting the version in use, naming the version
+ * that fixes it where the advisory says so — the single most actionable
+ * detail a security warning can carry.
+ * @param vulnerabilities - The advisories to render.
+ * @returns One markdown line per advisory, or an empty array if there are none.
+ */
+function vulnerabilityLines(vulnerabilities: Vulnerability[]): string[] {
+  return vulnerabilities.map((vulnerability) => {
+    const parts = [
+      htmlLink(vulnerability.url, escapeHtml(vulnerability.id)),
+      escapeHtml(vulnerability.summary ?? "Security advisory"),
+    ];
+    if (vulnerability.severity !== undefined) {
+      parts.push(escapeHtml(vulnerability.severity.toLowerCase()));
+    }
+    if (vulnerability.fixedVersion !== undefined) {
+      parts.push(`fixed in ${escapeHtml(vulnerability.fixedVersion)}`);
+    }
+
+    return colorSpan(
+      `$(shield) ${parts.join(" · ")}`,
+      themeColorVariable("vulnerable"),
+    );
+  });
+}
+
+/**
+ * Renders each peer requirement blocking an upgrade, distinguishing the ones
+ * a coordinated upgrade would clear from the ones that need upstream to
+ * publish first.
+ * @param conflicts - The blocking requirements.
+ * @param packageName - The package whose upgrade is blocked.
+ * @param latestVersion - The version being upgraded to, if known.
+ * @returns One markdown line per conflict, or an empty array if there are none.
+ */
+function conflictLines(
+  conflicts: PeerConflict[],
+  packageName: string,
+  latestVersion: string | undefined,
+): string[] {
+  const color = themeColorVariable("blocked");
+
+  return conflicts.map((conflict) => {
+    const requirement = `\`${conflict.blockedBy}@${conflict.blockerVersion}\` needs \`${packageName}@${conflict.requiredRange}\``;
+    const remedy = conflict.resolvedByUpgradingBlocker
+      ? `upgrading \`${conflict.blockedBy}\` too would allow \`${latestVersion ?? "the update"}\``
+      : `its latest release still doesn't allow \`${latestVersion ?? "the update"}\``;
+
+    return colorSpan(`$(circle-slash) ${requirement} — ${remedy}`, color);
+  });
 }
 
 /**
@@ -120,23 +254,39 @@ export function buildHoverMarkdown(metadata: PackageMetadata): MarkdownString {
  * link syntax elsewhere in the same string — see
  * {@link https://github.com/microsoft/vscode/issues/140686}. Mixing HTML
  * throughout avoids that failure mode.
- * @param metadata - The package metadata to link out from.
+ * @param status - The dependency to link out from.
+ * @param downloads - The formatted monthly download count, if known.
  * @returns An HTML line of `·`-separated links and stats.
  */
-function buildLinks(metadata: PackageMetadata): string {
-  const npmUrl = `https://www.npmjs.com/package/${encodeURIComponent(metadata.name)}`;
-  const links = [htmlLink(npmUrl, "npm")];
+function buildLinks(
+  status: DependencyStatus,
+  downloads: string | undefined,
+): string {
+  const { metadata, entry } = status;
+  const links: string[] = [];
 
-  if (metadata.repositoryUrl) {
+  if (entry.source === "npm") {
+    links.push(
+      htmlLink(
+        `https://www.npmjs.com/package/${encodeURIComponent(entry.name)}`,
+        "npm",
+      ),
+    );
+  }
+
+  if (metadata?.repositoryUrl !== undefined) {
     links.push(htmlLink(metadata.repositoryUrl, "Repository"));
   }
 
-  if (metadata.homepage && metadata.homepage !== metadata.repositoryUrl) {
+  if (
+    metadata?.homepage !== undefined &&
+    metadata.homepage !== metadata.repositoryUrl
+  ) {
     links.push(htmlLink(metadata.homepage, "Website"));
   }
 
-  if (metadata.downloads) {
-    links.push(mutedSpan(`${metadata.downloads} downloads/mo`));
+  if (downloads !== undefined) {
+    links.push(mutedSpan(`${downloads} downloads/mo`));
   }
 
   return links.join(" · ");
@@ -150,41 +300,6 @@ function buildLinks(metadata: PackageMetadata): string {
  */
 function htmlLink(href: string, label: string): string {
   return `<a href="${href}">${label}</a>`;
-}
-
-/**
- * Resolves the VS Code editor theme color CSS variable for a given
- * {@link BumpSeverity}, so hover text renders in the same red/yellow/blue
- * the editor already uses for errors, warnings, and info. Up-to-date
- * packages use a faded, low-emphasis color rather than a loud green, since
- * "nothing to do here" shouldn't compete for attention with real updates.
- * @param bump - The severity to look up a color for.
- * @returns A `var(--vscode-...)` CSS color expression.
- */
-const MUTED_COLOR = "var(--vscode-disabledForeground)";
-
-function bumpColor(bump: BumpSeverity): string {
-  switch (bump) {
-    case "major":
-      return "var(--vscode-errorForeground)";
-    case "minor":
-      return "var(--vscode-editorWarning-foreground)";
-    case "patch":
-      return "var(--vscode-editorInfo-foreground)";
-    case "none":
-    case "unsupported":
-      return MUTED_COLOR;
-  }
-}
-
-/**
- * Builds the color-coded status badge (e.g. "⚠ minor update") shown at the
- * start of a hover.
- * @param bump - The severity to render a badge for.
- * @returns An HTML span with the badge's icon, label, and color.
- */
-function statusBadge(bump: BumpSeverity): string {
-  return colorSpan(BUMP_LABEL[bump], bumpColor(bump));
 }
 
 /**
@@ -210,6 +325,19 @@ function mutedSpan(text: string): string {
 }
 
 /**
+ * Escapes text that came from the registry — descriptions, deprecation
+ * notices, advisory summaries — before it lands in an HTML-enabled hover.
+ * @param text - The untrusted text.
+ * @returns The text with HTML-significant characters escaped.
+ */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/**
  * Matches a markdown image wrapped in a link — `[![alt](img-url)](link-url)`
  * — as commonly used for npm/CI status badges (shields.io, etc.) at the top
  * of a README, which npm sometimes carries over into `description`.
@@ -224,7 +352,7 @@ const IMAGE_REGEX = /!\[[^\]]*\]\([^)]*\)/g;
  * unclosed `[![alt](url` or `![alt](url` — left over when npm's registry
  * truncates a description mid-badge. Must run *after*
  * {@link LINKED_IMAGE_REGEX} and {@link IMAGE_REGEX} have removed every
- * complete* badge, otherwise it can misfire on the last complete badge in
+ * complete badge, otherwise it can misfire on the last complete badge in
  * a string that also ends with a truncated one.
  */
 const DANGLING_BADGE_TAIL_REGEX = /\s*\[?!?\[[^\]]*\]?\([^)]*$/;
@@ -237,11 +365,13 @@ const DANGLING_BADGE_TAIL_REGEX = /\s*\[?!?\[[^\]]*\]?\([^)]*$/;
  * short) and collapses the whitespace left behind. The result is otherwise
  * shown in full — no length cap — since real descriptive text should read
  * completely, not get cut off arbitrarily.
+ *
+ * Exported for testing; not part of the extension's public API.
  * @param description - The raw description text, if any.
  * @returns The cleaned description, or `undefined` if empty or blank once cleaned.
  */
-function cleanDescription(description?: string): string | undefined {
-  if (!description) {
+export function cleanDescription(description?: string): string | undefined {
+  if (description === undefined) {
     return undefined;
   }
 
@@ -252,128 +382,5 @@ function cleanDescription(description?: string): string | undefined {
     .replace(/[ \t]{2,}/g, " ")
     .trim();
 
-  return cleaned || undefined;
-}
-
-/**
- * Resolves full display metadata for a package by combining the installed
- * version range (read from the document at `position`) with live registry
- * data.
- * @param packageName - The package name under the cursor.
- * @param document - The `package.json` document being hovered.
- * @param position - The cursor position within `document`.
- * @param token - Cancellation token forwarded to the underlying registry requests.
- * @returns The combined metadata, or `undefined` if the registry lookup failed.
- */
-function getPackageMetadata(
-  packageName: string,
-  document: TextDocument,
-  position: Position,
-  token: CancellationToken,
-): Promise<PackageMetadata | undefined> {
-  const installedVersion = getInstalledVersion(document, position);
-
-  return Promise.all([
-    getRegistryMetadata(packageName, token),
-    getDownloadCount(packageName, token),
-  ])
-    .then(([metadata, downloads]) => {
-      if (!metadata) {
-        return undefined;
-      }
-
-      const resolvedInstalledVersion = installedVersion
-        ? resolveInstalledVersion(
-            classifySpecifier(installedVersion),
-            metadata.distTags,
-          )
-        : undefined;
-
-      return {
-        name: metadata.name ?? packageName,
-        installedVersion,
-        resolvedInstalledVersion,
-        latestVersion: metadata.latestVersion ?? "unknown",
-        description: metadata.description ?? "",
-        downloads,
-        homepage: metadata.homepage,
-        repositoryUrl: metadata.repositoryUrl,
-        latestVersionPublishedAt: metadata.latestVersionPublishedAt,
-      };
-    })
-    .catch(() => undefined);
-}
-
-/**
- * Reads the version string declared on the line at `position`, e.g. the
- * `"^1.2.3"` in `"lodash": "^1.2.3"`.
- * @param document - The document to read from.
- * @param position - The line to read.
- * @returns The declared version range, or `undefined` if the line doesn't match a `"key": "value"` pattern.
- */
-function getInstalledVersion(
-  document: TextDocument,
-  position: Position,
-): string | undefined {
-  const line = document.lineAt(position.line).text;
-  const match = /"[^"]+"\s*:\s*"([^"]+)"/.exec(line);
-  return match?.[1];
-}
-
-/**
- * Determines the package name for the line under the cursor, if any.
- *
- * Triggers anywhere on a `"name": "range"` dependency line — the key, the
- * value, or the surrounding whitespace — rather than only the exact span of
- * one quoted string, so hovering the version specifier resolves to the
- * package it belongs to instead of being (incorrectly) treated as its own
- * lookup target. Note that VS Code's hover API cannot be triggered by
- * hovering the inline decoration text {@link ../features/dependency-decorations.ts}
- * renders past end-of-line — that's a platform limitation
- * ({@link https://github.com/microsoft/vscode/issues/105302}), not something
- * addressable here.
- * @param document - The candidate document; non-`package.json` documents always return `undefined`.
- * @param position - The cursor position to check.
- * @returns The package name, or `undefined` if the line isn't a dependency entry.
- */
-function getPackageNameAtPosition(
-  document: TextDocument,
-  position: Position,
-): string | undefined {
-  if (!isSupportedDocument(document)) {
-    return undefined;
-  }
-
-  return packageNameForLine(document.lineAt(position.line).text);
-}
-
-/**
- * Extracts the package name from a single `package.json` line, if that line
- * is a dependency entry (`"name": "range"`) and not a reserved top-level key.
- *
- * Exported for testing; not part of the extension's public API.
- * @param line - The line's full text.
- * @returns The package name, or `undefined` if the line isn't a dependency entry.
- */
-export function packageNameForLine(line: string): string | undefined {
-  const entryMatch = /^\s*"([^"]+)"\s*:\s*"([^"]*)"/.exec(line);
-  const packageName = entryMatch?.[1];
-  if (!packageName || RESERVED_PACKAGE_JSON_KEYS.has(packageName)) {
-    return undefined;
-  }
-
-  return packageName;
-}
-
-/**
- * Checks whether `document` is a `package.json` file this provider should
- * activate on.
- * @param document - The document to check.
- * @returns `true` if the document is a JSON/JSONC file named `package.json`.
- */
-function isSupportedDocument(document: TextDocument): boolean {
-  return (
-    document.fileName.endsWith("package.json") &&
-    ["json", "jsonc"].includes(document.languageId)
-  );
+  return cleaned === "" ? undefined : cleaned;
 }

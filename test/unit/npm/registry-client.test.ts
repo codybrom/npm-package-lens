@@ -48,6 +48,10 @@ suite("registry-client", () => {
             },
             "dist-tags": { latest: "4.17.21" },
             time: { "4.17.21": "2026-04-01T21:01:20.458Z" },
+            versions: {
+              "4.17.20": {},
+              "4.17.21": { peerDependencies: { react: "^18" } },
+            },
           }),
         ),
       );
@@ -62,6 +66,10 @@ suite("registry-client", () => {
           repositoryUrl: "https://github.com/lodash/lodash",
           latestVersionPublishedAt: "2026-04-01T21:01:20.458Z",
           distTags: { latest: "4.17.21" },
+          versions: ["4.17.20", "4.17.21"],
+          publishedAt: { "4.17.21": "2026-04-01T21:01:20.458Z" },
+          peerDependenciesByVersion: { "4.17.21": { react: "^18" } },
+          deprecations: {},
         });
       } finally {
         restore();
@@ -176,6 +184,88 @@ suite("registry-client", () => {
       try {
         const metadata = await getRegistryMetadata("malformed");
         assert.equal(metadata, undefined);
+      } finally {
+        restore();
+      }
+    });
+
+    test("Drops peer dependencies the publisher marked optional", async () => {
+      const restore = stubFetch(() =>
+        Promise.resolve(
+          jsonResponse({
+            name: "plugin",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                peerDependencies: { vite: "^7.0.0", rollup: "^4.0.0" },
+                peerDependenciesMeta: { rollup: { optional: true } },
+              },
+            },
+          }),
+        ),
+      );
+
+      try {
+        const metadata = await getRegistryMetadata("plugin");
+        assert.deepEqual(metadata?.peerDependenciesByVersion, {
+          "1.0.0": { vite: "^7.0.0" },
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    test("Records the publisher's deprecation notice per version", async () => {
+      const restore = stubFetch(() =>
+        Promise.resolve(
+          jsonResponse({
+            name: "old",
+            "dist-tags": { latest: "2.0.0" },
+            versions: {
+              "1.0.0": { deprecated: "use old@2" },
+              "2.0.0": {},
+            },
+          }),
+        ),
+      );
+
+      try {
+        const metadata = await getRegistryMetadata("old");
+        assert.deepEqual(metadata?.deprecations, { "1.0.0": "use old@2" });
+      } finally {
+        restore();
+      }
+    });
+
+    test("Queries the configured registry", async () => {
+      const requested: string[] = [];
+      const restore = stubFetch((input) => {
+        requested.push(String(input));
+        return Promise.resolve(jsonResponse({ name: "internal" }));
+      });
+
+      try {
+        await getRegistryMetadata("internal", {
+          registryUrl: "https://registry.example.com",
+        });
+        assert.deepEqual(requested, ["https://registry.example.com/internal"]);
+      } finally {
+        restore();
+      }
+    });
+
+    test("Keeps a scoped name's slash unencoded in the request path", async () => {
+      const requested: string[] = [];
+      const restore = stubFetch((input) => {
+        requested.push(String(input));
+        return Promise.resolve(jsonResponse({ name: "@types/node" }));
+      });
+
+      try {
+        await getRegistryMetadata("@types/node");
+        assert.deepEqual(requested, [
+          "https://registry.npmjs.org/%40types/node",
+        ]);
       } finally {
         restore();
       }

@@ -1,3 +1,6 @@
 {
-  "recommendations": ["codybrom.npm-package-lens"]
+  "recommendations": [
+    "codybrom.npm-package-lens",
+    "hbenl.vscode-mocha-test-adapter"
+  ]
 }
