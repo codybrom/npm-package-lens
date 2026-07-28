@@ -23,6 +23,7 @@
       "supported": true
     }
   },
+  "icon": "images/icon.png",
   "main": "./dist/extension.js",
   "scripts": {
     "vscode:prepublish": "npm run bundle",

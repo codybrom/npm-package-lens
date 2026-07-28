@@ -5,6 +5,7 @@ test/**
 out/**
 node_modules/**
 esbuild.js
+images/icon.svg
 
 # Editor / repo tooling, not needed at runtime
 .vscode/**

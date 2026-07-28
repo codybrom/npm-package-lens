@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <clipPath id="top-face-clip">
+      <path d="M-16,-7 L0,-16 L16,-7 L0,2 Z" />
+    </clipPath>
+  </defs>
+
+  <!-- background -->
+  <rect width="128" height="128" rx="24" fill="#1e1e1e" />
+
+  <!-- shipping box, centered in the lens area -->
+  <g transform="translate(52, 54)">
+    <!-- top face -->
+    <path d="M-16,-7 L0,-16 L16,-7 L0,2 Z" fill="#A9683D" stroke="#7A4A2A" stroke-width="1.5" stroke-linejoin="round" />
+    <!-- left face -->
+    <path d="M-16,-7 L0,2 L0,19 L-16,10 Z" fill="#8B5A2B" stroke="#7A4A2A" stroke-width="1.5" stroke-linejoin="round" />
+    <!-- right face -->
+    <path d="M16,-7 L0,2 L0,19 L16,10 Z" fill="#8B5A2B" stroke="#7A4A2A" stroke-width="1.5" stroke-linejoin="round" />
+
+    <!-- tape, diagonal across the top face only, parallel to the box's own edges -->
+    <g clip-path="url(#top-face-clip)">
+      <path d="M-8.41,-14.48 L10.76,-3.7 L8.41,0.48 L-10.76,-10.3 Z" fill="#c9a877" opacity="0.85" />
+    </g>
+
+    <!-- shipping label, nudged in from the outer edge of the left face -->
+    <path d="M-13.12,0.57 L-8.32,3.27 L-8.32,10.07 L-13.12,7.37 Z" fill="#ded3bc" />
+    <!-- fake label text lines, varying widths -->
+    <g stroke="#9c9280" stroke-width="0.6" stroke-linecap="round">
+      <line x1="-12.64" y1="2.74" x2="-9.04" y2="4.77" />
+      <line x1="-12.64" y1="4.24" x2="-10.00" y2="5.72" />
+      <line x1="-12.64" y1="5.74" x2="-9.52" y2="7.49" />
+    </g>
+
+    <!-- shipper's stamp, centered on the right face: circle, square, triangle -->
+    <g fill="#5c3a1e" opacity="0.85">
+      <circle cx="5.76" cy="7.26" r="1.3" />
+      <rect x="6.8" y="4.8" width="2.4" height="2.4" />
+      <path d="M10.24,3.44 L11.54,6.04 L8.94,6.04 Z" />
+    </g>
+  </g>
+
+  <!-- magnifying glass ring + handle -->
+  <circle cx="52" cy="52" r="34" fill="none" stroke="#ffffff" stroke-width="8" />
+  <line x1="81" y1="81" x2="110.7" y2="110.7" stroke="#ffffff" stroke-width="10" stroke-linecap="round" />
+
+  <!-- update badge (caret), on top of everything -->
+  <circle cx="82" cy="30" r="15" fill="#CB3837" />
+  <path d="M75,34 L82,25 L89,34" fill="none" stroke="#ffffff" stroke-width="4" stroke-linejoin="round" stroke-linecap="round" />
+</svg>
