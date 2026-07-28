@@ -3,7 +3,7 @@
   "displayName": "npm Package Lens",
   "description": "Hover and inline annotations showing outdated dependencies directly in package.json",
   "version": "0.1.0",
-  "publisher": "codybromley",
+  "publisher": "codybrom",
   "repository": {
     "type": "git",
     "url": "https://github.com/codybrom/npm-package-lens.git"
