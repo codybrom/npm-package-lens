@@ -1,0 +1,13 @@
+# Source (only compiled out/src/**.js ships)
+src/**
+test/**
+out/test/**
+**/*.map
+
+# Editor / repo tooling, not needed at runtime
+.vscode/**
+.github/**
+.claude/**
+.gitignore
+.prettierignore
+tsconfig.json

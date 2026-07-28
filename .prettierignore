@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+
+# Packaged extension
+*.vsix
+
+# npm-managed, not hand-formatted
+package.json
+package-lock.json
+
+# Plain text, not a Prettier-supported format
+LICENSE

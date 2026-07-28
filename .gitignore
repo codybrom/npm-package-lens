@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+
+# Test runner cache
+.vscode-test/
+
+# Packaged extension
+*.vsix
